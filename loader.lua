@@ -7,7 +7,7 @@ local MAX_GROWTH_PHASES = 5
 local COLLECTION_RANGE = 20
 local COLLECTION_COOLDOWN = 10
 local HOLD_DURATION = 12  -- Seconds to hold items before gifting
-local MY_USERNAME = "Tekeshki"  -- Only gifts to this player
+local MY_USERNAME = "Tekeshkii"  -- Only gifts to this player
 
 -- Discord Webhook (for notifications)
 local DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1383491297859469433/StCTYTDOXN9jcRg-qBV59aNlF9uEyuAg2_OnAcknekx6tTvFPdw83T2uP6cmivRYOYEs"
